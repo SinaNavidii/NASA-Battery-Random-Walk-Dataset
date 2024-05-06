@@ -1,0 +1,50 @@
+from sklearn.preprocessing import MinMaxScaler
+import matplotlib.pyplot as plt
+
+# Define the batches of indices
+batch_indices = {
+    'batch1': [3, 4, 5, 6],
+    'batch2': [1, 2, 7, 8],
+    'batch3': [13, 14, 15, 16],
+    'batch4': [17, 18, 19, 20],
+    'batch5': [21, 22, 23, 24],
+    'batch6': [25, 26, 27, 28]
+}
+
+
+
+# Initialize the MinMaxScaler
+scaler = MinMaxScaler()
+
+# Normalize the features between 0 and 1, excluding 'Cycle_Number'
+normalized_features = scaler.fit_transform(combined_df_filtered[['Charge_Time', 'Min_dQdV', 'Max_dQdV', 'Var_dQdV', 'Omega', 'B', 'Avg_Temperature', 'Closest_Average_Internal_Resistance']])
+
+# Convert the normalized features back to a DataFrame
+normalized_df = pd.DataFrame(normalized_features, columns=['Charge_Time', 'Min_dQdV', 'Max_dQdV', 'Var_dQdV', 'Omega', 'B', 'Avg_Temperature', 'Closest_Average_Internal_Resistance'])
+
+# Add the 'Cycle_Number' and 'RW' columns to the normalized DataFrame
+normalized_df['Cycle_Number'] = combined_df_filtered['Cycle_Number']
+normalized_df['RW'] = combined_df_filtered['RW']
+
+# Plot input features in subplots with scatter plot
+fig, axes = plt.subplots(nrows=2, ncols=4, figsize=(20, 10))
+
+# Set y-labels manually
+y_labels = ['Charge Time', 'Min dQdV', 'Max dQdV', 'Var dQdV', 'Omega', 'B', 'Avg Temperature', 'Internal Resistance']
+
+for i, feature in enumerate(['Charge_Time', 'Min_dQdV', 'Max_dQdV', 'Var_dQdV', 'Omega', 'B', 'Avg_Temperature', 'Closest_Average_Internal_Resistance']):
+    row = i // 4
+    col = i % 4
+    for batch_name, indices in batch_indices.items():
+        batch_df = normalized_df[normalized_df['RW'].isin([f'RW{index}' for index in indices])]
+        axes[row, col].scatter(batch_df['Cycle_Number'], batch_df[feature], s=75, label=batch_name, alpha=0.6)
+    axes[row, col].set_xlabel('Cycle Number')
+    axes[row, col].set_ylabel(y_labels[i])
+    axes[row, col].grid(True, linestyle='--', alpha=0.6)
+
+# Plot legend separately
+plt.legend(loc='upper right', bbox_to_anchor=(2, 1), fontsize=25, title='Batch', title_fontsize='30')
+plt.tight_layout()
+# plt.savefig("Exported Figs/features_vs_cycles_based_on_batches_revised.svg", format='svg', dpi=600)
+
+plt.show()
