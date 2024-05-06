@@ -1,0 +1,239 @@
+import os
+import scipy.io
+import pandas as pd
+import numpy as np
+import pickle
+from scipy.interpolate import PchipInterpolator
+from scipy.optimize import curve_fit
+import warnings
+warnings.filterwarnings('ignore')
+
+
+class FeatureExtraction:
+    def __init__(self, data_directory, datasets_to_save):
+        self.data_directory = data_directory
+        self.features = {}
+        self.datasets_to_save = datasets_to_save
+
+    def quadratic_function(self, x, omega, b):
+        return omega * x**2 + b
+
+    def extract_features(self, mat_file):
+        mat_data = scipy.io.loadmat(mat_file)
+        dataset = pd.DataFrame(mat_data['data'][0][0][0][0])
+
+        features_without_resistance = pd.DataFrame(columns=['Cycle_Index', 'Charge_Time', 'Min_dQdV', 'Max_dQdV', 'Var_dQdV', 'Omega', 'B', 'Avg_Temperature','Cycle_Number'])
+
+        charge_time_temp = None
+
+        # Initialize cycle number column
+        features_without_resistance['Cycle_Number'] = 0
+
+        # Initialize cycle counter
+        cycle_count = 1
+
+        # Initialize flag to check if a discharge row has been found
+        discharge_found = False
+
+        # Iterate over the rows
+        for index, row in dataset.iterrows():
+            # Check if the type is 'D' (discharge)
+            if 'D' in row['type'][0]:
+                # Set the cycle number for discharge rows
+                dataset.at[index, 'Cycle_Number'] = cycle_count
+                # Set flag to indicate discharge row found
+                discharge_found = True
+            # Check if the type is 'C' (charge) and a discharge row has been found
+            elif 'C' in row['type'][0] and discharge_found:
+                # Set the cycle number for charge rows following a discharge
+                dataset.at[index, 'Cycle_Number'] = cycle_count
+                # Increment the cycle counter
+                cycle_count += 1
+                # Reset the flag
+                discharge_found = False
+
+        for cycle_index in range(len(dataset['voltage'])):
+            comment = dataset['comment'][cycle_index][0]
+            cycle_number = dataset['Cycle_Number'][cycle_index]
+            if 'reference charge' in comment:
+                time = dataset['relativeTime'][cycle_index]
+                charge_time_temp = time.max() - time.min()
+
+            elif 'reference discharge' in comment:
+                if charge_time_temp is not None:
+                    voltage = dataset['voltage'][cycle_index][0]
+                    current = dataset['current'][cycle_index]
+                    time = dataset['time'][cycle_index]
+
+                    dt = np.diff(time)
+                    current = current[:, :-1]
+                    capacity = np.cumsum(current * dt) / 3600
+
+                    temperature = np.mean(dataset['temperature'][cycle_index][0])
+
+                    # Remove duplicate voltage values
+                    unique_voltage, unique_indices = np.unique(voltage[:-1], return_index=True)
+                    unique_capacity = capacity[unique_indices]
+
+                    # Filter out voltage values with less than three elements
+                    filtered_unique_voltage = unique_voltage[unique_voltage > 2]
+                    
+
+
+                    
+                    # Check if there are enough data points to interpolate
+                    if len(filtered_unique_voltage) > 2:
+                        try:
+                            # Interpolate QV data
+                            interp_func = PchipInterpolator(filtered_unique_voltage, unique_capacity)
+                            voltage_interp = np.linspace(min(filtered_unique_voltage), max(filtered_unique_voltage), 50)
+                            Q_interp = interp_func(voltage_interp)
+                    
+                            # Calculate dQ/dV using interpolated QV data
+                            dQdV_interp = np.diff(Q_interp) / np.diff(voltage_interp)
+                    
+                            # Filter out zero values from dQdV_interp
+                            non_zero_indices = np.where(dQdV_interp != 0)[0]
+                            voltage_interp = voltage_interp[:-1][non_zero_indices]
+                            dQdV_interp = dQdV_interp[non_zero_indices]
+                    
+                            # Filter out voltage values within the specified range
+                            voltage_range_indices = np.where((voltage_interp >= 3.5) & (voltage_interp <= 3.9))[0]
+
+                    
+                            # Check if there are any data points within the specified voltage range
+                            if len(voltage_range_indices) > 0:
+                                voltage_filtered = voltage_interp[voltage_range_indices]
+                                dQdV_filtered = dQdV_interp[voltage_range_indices]
+
+                                Q_interp_filtered = Q_interp[voltage_range_indices]
+                                # Fit a quadratic model to the interpolated QV curve
+                                popt_interp, _ = curve_fit(self.quadratic_function, voltage_filtered, Q_interp_filtered)
+                    
+                                # Find the minimum and maximum values of dQdV within the specified range
+                                min_dQdV_range = np.min(dQdV_filtered)
+                                max_dQdV_range = np.max(dQdV_filtered)
+                    
+                                # Calculate SOH
+                                dschg_cap = interp_func(3.22)
+                                SOH = dschg_cap / 2.1
+                    
+                                # Append features to the DataFrame
+                                features_without_resistance = pd.concat([
+                                    features_without_resistance,
+                                    pd.DataFrame({
+                                        'Cycle_Index': [cycle_index],
+                                        'Charge_Time': [charge_time_temp],
+                                        'Min_dQdV': [min_dQdV_range],
+                                        'Max_dQdV': [max_dQdV_range],
+                                        'Var_dQdV': [np.var(dQdV_filtered)],
+                                        'Omega': [popt_interp[0]],
+                                        'B': [popt_interp[1]],
+                                        'Avg_Temperature': [temperature],
+                                        'SOH': [SOH],
+                                        'Cycle_Number': [cycle_number]
+                                    })
+                                ], ignore_index=True)
+                    
+                                charge_time_temp = None
+                            else:
+                                print("No data points within the specified voltage range.")
+                        except ValueError:
+                            # Handle the case when an error occurs during interpolation
+                            print("Error during interpolation.")
+                    else:
+                        pass
+        results = []
+
+        for i in range(0, len(dataset), 50):
+            start_voltages = []
+            end_voltages = []
+            cycle_numbers = []
+
+            for cycle_index in range(i, min(i + 50, len(dataset))):
+                if "pulsed load (discharge)" in dataset['comment'][cycle_index][0]:
+                    voltage = dataset['voltage'][cycle_index][0]
+                    start_voltages.append(voltage[0])
+                    end_voltages.append(voltage[-1])
+                    cycle_numbers.append(cycle_index)
+
+            internal_resistances = [(start_v - end_v) / 1 for start_v, end_v in zip(start_voltages, end_voltages)]
+            avg_internal_resistance = np.mean(internal_resistances)
+
+            results.append({'Group': i // 50 + 1, 'Cycle_Numbers': cycle_numbers, 'Average_Internal_Resistance': avg_internal_resistance})
+
+        dschrg_res = pd.DataFrame(results)
+        non_none_dschrg_res = dschrg_res[dschrg_res['Average_Internal_Resistance'].notna()]
+
+        first_cycle_numbers = {}
+
+        for index, row in non_none_dschrg_res.iterrows():
+            group = row['Group']
+            cycle_numbers = row['Cycle_Numbers']
+            first_cycle_numbers[group] = min(cycle_numbers)
+
+        def find_closest_group(cycle_number):
+            closest_group = None
+            min_distance = float('inf')
+            for group, first_cycle_number in first_cycle_numbers.items():
+                distance = abs(cycle_number - first_cycle_number)
+                if distance < min_distance:
+                    closest_group = group
+                    min_distance = distance
+            return closest_group
+
+
+        features = features_without_resistance
+        for index, row in features.iterrows():
+            cycle_number = row['Cycle_Index']
+            closest_group = find_closest_group(cycle_number)
+            if closest_group is not None:
+                resistance = non_none_dschrg_res.loc[non_none_dschrg_res['Group'] == closest_group, 'Average_Internal_Resistance'].values[0]
+
+                features.loc[index, 'Closest_Average_Internal_Resistance'] = resistance
+            else:
+                features.loc[index, 'Closest_Average_Internal_Resistance'] = None
+
+        # Initialize RUL column with NaN values
+        features['RUL'] = np.nan
+        # print(features)
+
+        # Find the index where SOH <= 0.6 for the first time
+        if 'SOH' in features.columns:
+            first_low_soh_index = features[features['SOH'] < 0.87]['Cycle_Number'].idxmin()
+
+            # Set RUL values
+            if not np.isnan(first_low_soh_index):
+                # Set RUL to 0 for SOH <= 0.6
+                features.loc[first_low_soh_index:, 'RUL'] = 0
+
+                # Find the cycle index where RUL becomes 0
+                cycle_index_rul_zero = features.loc[first_low_soh_index, 'Cycle_Number']
+
+                # Update RUL for SOH > 0.6
+                features.loc[:first_low_soh_index, 'RUL'] = cycle_index_rul_zero - features.loc[:first_low_soh_index, 'Cycle_Number']
+
+        return features
+
+    def process_datasets(self):
+        mat_files = [f for f in os.listdir(self.data_directory) if f.endswith('.mat')]
+        for mat_file in mat_files:
+            dataset_name = os.path.splitext(mat_file)[0]
+            features = self.extract_features(os.path.join(self.data_directory, mat_file))
+            self.features[dataset_name] = features
+
+            # Save features for specific datasets
+            if dataset_name in self.datasets_to_save:
+                with open(f'processed_data/{dataset_name}_features.pkl', 'wb') as f:
+                    pickle.dump(features, f)
+
+
+if __name__ == "__main__":
+    data_directory = 'RW_Skewed_High_40C_DataSet_2Post/RW_Skewed_High_40C_DataSet_2Post/data/Matlab'
+    datasets_to_save = ['RW25', 'RW27', 'RW28']
+    feature_extractor = FeatureExtraction(data_directory, datasets_to_save)
+    feature_extractor.process_datasets()
+    # Access features for each dataset
+    for dataset_name, features in feature_extractor.features.items():
+        print(f"Features for {dataset_name}:")
+        print(features)
