@@ -1,0 +1,79 @@
+import numpy as np
+from sklearn.preprocessing import MinMaxScaler
+import torch
+from torch.utils.data import DataLoader
+import functions as func
+from sklearn.impute import SimpleImputer
+from sklearn.preprocessing import StandardScaler
+import GPy
+import matplotlib.pyplot as plt
+
+combined_features_df = pd.read_pickle('combined_features_df_capacity_drop_updated.pkl')
+
+combined_features_df = combined_features_df[combined_features_df['cell_number'] != 16]
+combined_features_df = combined_features_df[combined_features_df['cell_number'] != 17]
+
+
+combined_features_df = combined_features_df[combined_features_df['Capacity_drop(SOH)'] > -0.2]
+
+# # Reset the index after dropping rows
+combined_features_df.reset_index(drop=True, inplace=True)
+
+# Select features and target variable
+features = ['total_time', 'charge_throughput', 'absolute_time', 'cell_capacity', 
+            'duration_below_5', 'duration_between_5_40', 'duration_above_40',
+            'duration_below_2A', 'duration_between_2A_3A', 'duration_above_3A']
+target = 'Capacity_drop(SOH)'
+
+# Extract even and odd cell numbers
+even_cells = combined_features_df.loc[combined_features_df['cell_number'] % 2 == 0]
+odd_cells = combined_features_df.loc[combined_features_df['cell_number'] % 2 != 0]
+
+# Testing set
+X_test_prep = odd_cells[features].values
+y_test_prep = odd_cells[target].values
+
+# Prepare training data (using even cell numbers)
+X_train_prep = even_cells[features].values
+y_train_prep = even_cells[target].values
+
+# Normalize the features
+scaler = MinMaxScaler()
+X_train_scaled = scaler.fit_transform(X_train_prep)
+X_test_scaled = scaler.transform(X_test_prep)
+
+# Train GPR model
+kernel = GPy.kern.Matern52(input_dim=X_train_scaled.shape[1], ARD=True)
+model = GPy.models.GPRegression(X_train_scaled, y_train_prep.reshape(-1, 1), kernel)
+model.optimize(messages=True, max_f_eval=1000)
+
+# Predict on test set
+y_pred, y_var = model.predict(X_test_scaled)
+
+# Calculate RMSE
+rmse = np.sqrt(np.mean((y_pred - y_test_prep.reshape(-1, 1))**2))
+
+# Calculate calibration score
+credible_interval_width = 1.96 * np.sqrt(y_var)
+upper_bound = y_pred + credible_interval_width
+lower_bound = y_pred - credible_interval_width
+within_interval = np.logical_and(y_test_prep >= lower_bound.flatten(), y_test_prep <= upper_bound.flatten())
+calibration_score = np.mean(within_interval)
+
+# Plot predicted vs. true
+plt.figure(figsize=(6, 5))
+plt.scatter(y_test_prep, y_pred, color='blue', s=100, alpha=0.6, label='Predicted vs True')
+plt.plot([min(y_test_prep), max(y_test_prep)], [min(y_test_prep), max(y_test_prep)], color='red', linestyle='--', label='Perfect prediction')
+
+# Add calibration score and RMSE to the plot
+plt.text(0.95, 0.15, f'RMSE = {rmse:.5f}', ha='right', va='bottom', transform=plt.gca().transAxes, fontsize=20, color='black', bbox=dict(facecolor='white', alpha=0.5))
+plt.text(0.95, 0.05, f'CS = {calibration_score:.5f}', ha='right', va='bottom', transform=plt.gca().transAxes, fontsize=20, color='black', bbox=dict(facecolor='white', alpha=0.5))
+
+plt.grid(True)
+# Increase font size of label ticks
+plt.xticks(fontsize=20)
+plt.yticks(fontsize=20)
+
+# plt.savefig("Exported Figs/Cap_Drop_forecast_GPR_Mat5.svg", format='svg', dpi=600)
+
+plt.show()
