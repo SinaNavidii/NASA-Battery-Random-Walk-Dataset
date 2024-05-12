@@ -223,6 +223,14 @@ combined_features_df = pd.concat(all_features_dfs, ignore_index=True)
 # Drop rows where cell_capacity is equal to zero
 combined_features_df = combined_features_df[combined_features_df['cell_capacity'] != 0]
 
+combined_features_df = combined_features_df[combined_features_df['Capacity_drop(SOH)'] > -0.2]
+
+# Group by 'cell_number' and calculate cumulative sum of 'Capacity_drop(SOH)'
+combined_features_df['cumulative_capacity_drop'] = combined_features_df.groupby('cell_number')['Capacity_drop(SOH)'].cumsum()
+#fix absolute time 
+combined_features_df['absolute_time'] = combined_features_df.groupby('cell_number')['total_time'].cumsum()
+
+
 # Reset the index after dropping rows
 combined_features_df.reset_index(drop=True, inplace=True)
 
