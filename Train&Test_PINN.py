@@ -2,9 +2,12 @@ import torch
 from torch import optim
 from torch.utils.data import DataLoader
 import functions as func
-import pickle
 import matplotlib.pyplot as plt
 from sklearn.metrics import mean_squared_error
+import matplotlib.pyplot as plt
+from sklearn.metrics import mean_squared_error
+# Set font to Times New Roman
+plt.rcParams['font.family'] = 'Times New Roman'
 
 ## PINN -> same setup as Baseline in terms of architecture  
 settings_RUL_CaseA = dict()
@@ -76,6 +79,18 @@ metric_std['train'] = np.zeros((len(inputs_lib_dynamical), 1))
 metric_std['val'] = np.zeros((len(inputs_lib_dynamical), 1))
 metric_std['test'] = np.zeros((len(inputs_lib_dynamical), 1))
 
+best_round = None
+best_rmse = float('inf') 
+
+
+settings = torch.load('Settings\\settings_RUL_CaseA.pth')
+seq_len = 1
+perc_val = 0.5
+num_rounds = settings['num_rounds']
+batch_size = settings['batch_size']
+num_epoch = settings['num_epoch']
+num_layers = settings['num_layers']
+num_neurons = settings['num_neurons']
 
 for l in range(len(inputs_lib_dynamical)):
     inputs_dynamical, inputs_dim_dynamical = inputs_lib_dynamical[l], inputs_dim_lib_dynamical[l]
@@ -88,7 +103,7 @@ for l in range(len(inputs_lib_dynamical)):
     metric_rounds['test'] = np.zeros(num_rounds)
     weights_rounds = [[]] * num_rounds
     for round in range(num_rounds):
-        inputs_dim = len(features)
+        inputs_dim = 60
         outputs_dim = 1
 
         train_set = func.TensorDataset(inputs_train, targets_train)  
@@ -166,31 +181,21 @@ for l in range(len(inputs_lib_dynamical)):
         weights_rounds[round]['lambda_U'] = results_epoch['var_U']
         weights_rounds[round]['lambda_F'] = results_epoch['var_F']
         weights_rounds[round]['lambda_F_t'] = results_epoch['var_F_t']
-        # torch.save(weights_rounds, 'test results\\Adaptive Balancing\\weights_rounds_RUL_CaseA_DeepHPM_AdpBal_AllExceptOneBatchFiltered.pth')
 
-    metric_mean['train'][l] = np.mean(metric_rounds['train'])
-    metric_mean['val'][l] = np.mean(metric_rounds['val'])
-    metric_mean['test'][l] = np.mean(metric_rounds['test'])
-    metric_std['train'][l] = np.std(metric_rounds['train'])
-    metric_std['val'][l] = np.std(metric_rounds['val'])
-    metric_std['test'][l] = np.std(metric_rounds['test'])
-    # torch.save(metric_mean, 'test results\\metric_mean_RUL_AllExceptOneBatchFiltered_CaseA_DeepHPM_AdpBal.pth')
-    # torch.save(metric_std, 'test results\\metric_std_RUL_AllExceptOneBatchFiltered_CaseA_DeepHPM_AdpBal.pth')
+        # Check if the current round has the lowest RMSE
+        if RMSE_val < best_rmse:
+            best_rmse = RMSE_val
+            best_round = round
+            best_U_pred_test = U_pred_test.detach().cpu().numpy()
+
+
 
 pass
 
 
-import matplotlib.pyplot as plt
-from sklearn.metrics import mean_squared_error
-# Set font to Times New Roman
-plt.rcParams['font.family'] = 'Times New Roman'
-
-
-U_pred_test_np = U_pred_test.detach().cpu().numpy()
-targets_test_np = targets_test.detach().cpu().numpy()
 # Flatten the arrays if they have more than one dimension
 targets_test_flat = targets_test_np.flatten()
-U_pred_test_flat = U_pred_test_np.flatten()
+U_pred_test_flat = best_U_pred_test.flatten()
 
 # Calculate RMSE
 # rmse = metric_mean['test'].min()
