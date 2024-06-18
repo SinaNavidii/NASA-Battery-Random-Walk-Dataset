@@ -1,2 +1,1 @@
-# NASA Battery Random Walk Dataset
- Preprocess NASA RW dataset and train/test PIML models. 
+# Physics-infomred machine learning for SOH forecasting on RW dataset from NASA. 
