@@ -49,7 +49,5 @@ plt.yticks(fontsize=20)
 plt.legend(fontsize=20, bbox_to_anchor=(1, 0.85), loc='upper left')
 plt.tight_layout()
 
-plt.savefig("Exported Figs/Cumulative_capacity_vis_v0.svg", format='svg', dpi=600)
-
 # Show plot
 plt.show()
