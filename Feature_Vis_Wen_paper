@@ -45,6 +45,5 @@ for i, feature in enumerate(['Charge_Time', 'Min_dQdV', 'Max_dQdV', 'Var_dQdV', 
 # Plot legend separately
 plt.legend(loc='upper right', bbox_to_anchor=(2, 1), fontsize=25, title='Batch', title_fontsize='30')
 plt.tight_layout()
-# plt.savefig("Exported Figs/features_vs_cycles_based_on_batches_revised.svg", format='svg', dpi=600)
 
 plt.show()
